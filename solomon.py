@@ -6,6 +6,7 @@ from math import pi, sqrt
 from dataclasses import dataclass
 from scipy.optimize import root
 from CoolProp.CoolProp import PropsSI
+import matplotlib.pyplot as plt
 
 FLUID = "NitrousOxide"   # muda para "CarbonDioxide" se precisares
 
@@ -163,68 +164,56 @@ def M0_from_fill(V_total, fL, T0, P0):
     return rhoL*Vl0  # massa inicial de N2O líquido
 
 
-def run_blowdown(tank, inj, t_stop=30.0, dt=0.01, mode="isentropic",
-                 fL=0.90, pressurante_constante=True, P_const=5.0e6):
+def run_blowdown(tank, inj, dt=0.01, mode="isentropic",
+                 fL=0.90, pressurante_constante=True, P_const=5.0e6,
+                 M_tol=1e-6):
     Ac = inj.N*0.25*pi*inj.D**2
-
-    # estado inicial
-    M = float(tank.M0)           # massa de N2O líquido
+    M = float(tank.M0)
     T = _clip_T(float(tank.T0))
     V = float(tank.V)
-
-    # pressão no tanque
-    P = P_const if pressurante_constante else None
-
-    # histórico
     t = 0.0
+
     hist = {k: [] for k in ["t","M","T","p","mdot"]}
 
-    while t <= t_stop and M > 1e-8:
-        # volume de líquido e gás
-        if pressurante_constante:
-            P1 = P_const
-        else:
-            P1 = P  # se implementares o modelo do N2, atualizarás isto em baixo
-
-        rhoL = rho_liq_PT(T, P1)    # densidade do N2O líquido no estado real do tanque
+    while True:
+        P1 = P_const  # pressão montante constante
+        rhoL = _rhoL_sat(T)
         Vl   = M / rhoL
-        Vg   = max(V - Vl, 1e-8)
-
-        # propriedades do N2O líquido (usa rhoL, NÃO M/V)
-        p1, h1, s1 = state_DT(T, rhoL)  # atenção: 'p1' aqui é o calculado termodinâmico; usa P1 para hidráulica
-        # para hidráulica, a pressão montante correta é P1 (do pressurizante)
+        if Vl >= V:  # proteção
+            Vl = 0.9999*V; rhoL = M/Vl
+        p1, h1, s1 = state_DT(T, rhoL)
         P_up = P1
 
-        # estado jusante no injetor
+        # downstream
         if mode == "isentropic":
-            T2, rho2, p2, h2, s2 = downstream_state(inj.P2, s1=s1)
+            T2, rho2, _, h2, _ = downstream_state(inj.P2, s1=s1)
         else:
-            T2, rho2, p2, h2, s2 = downstream_state(inj.P2, h1=h1)
+            T2, rho2, _, h2, _ = downstream_state(inj.P2, h1=h1)
 
-        # Pvap para kappa (em T do tanque)
-        Pv1 = _Pvap_from_T(T)
-
-        # caudal NHNE usa P_up como pressão montante
+        Pv1  = _Pvap_from_T(T)
         mdot = m_dot_NHNE(inj.Cd, Ac, P_up, inj.P2, rhoL, rho2, h1, h2, Pv1)
 
-        # integração de Euler sobre a massa e energia do LÍQUIDO
-        M_new = max(M - mdot*dt, 1e-9)
+        # Euler
+        M_new = max(M - mdot*dt, 0.0)
         H_old = M * h1
-        H_new = H_old - h1*mdot*dt   # entalpia que sai é ~ h1 (saída extraída do tanque)
+        H_new = H_old - h1*mdot*dt
+        if M_new <= M_tol:
+            # último registo no instante atual
+            hist["t"].append(t)
+            hist["M"].append(M)
+            hist["T"].append(T)
+            hist["p"].append(P_up)
+            hist["mdot"].append(mdot)
+            t_empty = t
+            break
 
         h_new = H_new / M_new
-        # resolve T novo a partir de h_new e rho_liq(T,P_up) ≈ dependente de T
-        # aproxima: itera T mantendo P_up
-        def fT(Tguess):
-            rho_guess = rho_liq_PT(Tguess, P_up)
-            return PropsSI("H","D",rho_guess,"T",_clip_T(Tguess),FLUID) - h_new
-        # bissecção simples
-        T_lo, T_hi = _T_bounds()
-        a,b = T_lo,T_hi
+        def fT(Tg):
+            rg = rho_liq_PT(Tg, P_up)
+            return PropsSI("H","D",rg,"T",_clip_T(Tg),FLUID) - h_new
+        a,b = _T_bounds()
         for _ in range(60):
-            m = 0.5*(a+b)
-            fm = fT(m)
-            fa = fT(a)
+            m = 0.5*(a+b); fm=fT(m); fa=fT(a)
             if fm==0 or abs(b-a)<1e-6: T_new=m; break
             if fa*fm<0: b=m
             else: a=m
@@ -232,25 +221,66 @@ def run_blowdown(tank, inj, t_stop=30.0, dt=0.01, mode="isentropic",
             T_new = 0.5*(a+b)
 
         # registo
-        hist["t"].append(t)
-        hist["M"].append(M)
-        hist["T"].append(T)
-        hist["p"].append(P_up)
-        hist["mdot"].append(mdot)
+        hist["t"].append(t); hist["M"].append(M); hist["T"].append(T)
+        hist["p"].append(P_up); hist["mdot"].append(mdot)
 
         # avanço
         M, T = M_new, T_new
         t += dt
 
-        # critério de paragem hidráulico
-        if P_up <= inj.P2: break
+    for k in hist: hist[k] = np.array(hist[k], float)
+    return hist, t_empty
 
-        # se quiseres modelo de N2 selado (pressão variável), aqui atualizas P via gás ideal:
-        # n_N2 constante, P = n_N2*R*N2 * T / Vg
-        if not pressurante_constante:
-            P = max(1e5, P)  # placeholder: implementar n_N2 e atualizar P
-    for k in hist: hist[k]=np.array(hist[k],dtype=float)
-    return hist
+time, mdots = [], []
+def run_blowdown_autopressurizado(tank, inj, t_stop=30.0, dt=0.01, mode="isentropic"):
+    Ac = inj.N*0.25*pi*inj.D**2
+    M = float(tank.M0)
+    T = _clip_T(float(tank.T0))
+    V = float(tank.V)
+    t = 0.0
+
+    hist = {k: [] for k in ["t","M","T","p","mdot"]}
+
+    while t <= t_stop and M > 1e-8:
+        # propriedades de saturação
+        Ps = _psat(T)
+        rhoL = _rhoL_sat(T)
+        rhoV = float(PropsSI("D","T",T,"Q",1,FLUID))
+        hL = float(PropsSI("H","T",T,"Q",0,FLUID))
+        hV = float(PropsSI("H","T",T,"Q",1,FLUID))
+        sL = float(PropsSI("S","T",T,"Q",0,FLUID))
+
+        # volumes e massa de vapor
+        Vl = M / rhoL
+        Vg = max(V - Vl, 1e-8)
+        Mg = rhoV * Vg
+
+        # caudal de saída (líquido, mas ajustado pelo NHNE)
+        Pv1 = Ps
+        T2, rho2, p2, h2, s2 = downstream_state(inj.P2, s1=sL)
+        mdot = m_dot_NHNE(inj.Cd, Ac, Ps, inj.P2, rhoL, rho2, hL, h2, Pv1)
+
+        # balanço de energia com evaporação instantânea
+        M_new = max(M - mdot*dt, 1e-9)
+        Q_evap = (M - M_new)*(hV - hL)  # energia para evaporar igual ao N2O perdido
+        Cp_liq = PropsSI("Cpmass","T",T,"Q",0,FLUID)
+        T_new = _clip_T(T - Q_evap/(M_new*Cp_liq))  # arrefecimento
+
+        # registo
+        hist["t"].append(t)
+        hist["M"].append(M)
+        hist["T"].append(T)
+        hist["p"].append(Ps)
+        hist["mdot"].append(mdot)
+
+        M, T = M_new, T_new
+        t += dt
+
+        if Ps <= inj.P2:
+            break
+
+    for k in hist: hist[k]=np.array(hist[k],float)
+    return hist, t
 
 
 # --------------------- exemplo ---------------------
@@ -258,22 +288,28 @@ def run_blowdown(tank, inj, t_stop=30.0, dt=0.01, mode="isentropic",
 if __name__ == "__main__":
     V   = 0.009
     fL  = 0.90
-    T0  = 274.25
+    T0  = 283.25
     P0  = 4.4e6  # 50 bar
 
     M0  = M0_from_fill(V, fL, T0, P0)
 
     tank = Tank(V=V, M0=M0, T0=T0)
-    inj  = Injector(Cd=0.80, D=0.0015, P2=1e5, N=12)
+    inj  = Injector(Cd=0.67, D=0.0015, P2=1e5, N=12)
 
-    out = run_blowdown(tank, inj, t_stop=30.0, dt=0.05,
-                       mode="isentropic", fL=fL,
-                       pressurante_constante=True, P_const=P0)
+    
+    out, t_empty = run_blowdown_autopressurizado(tank, inj, t_stop=30.0, dt=0.05)
 
-
+    print(f"P0={P0} | T0={T0} | V={V} | fl={fL}")
     print(f"N={inj.N} furos, D={inj.D*1000} mm")
     print("Amostras:", out["t"].size)
-    print("mdot médio 15 s [kg/s]:", out["mdot"][out["t"] <= 15.0].mean() if out["t"].size else 0.0)
-
+    print(f"M0={M0}")
+    print("Tempo até esvaziar [s]:", t_empty)
+    print("Débito médio até esvaziar [kg/s]:", out["mdot"].mean())
     print("p inicial [MPa]:", out["p"][0]/1e6 if out["p"].size else np.nan)
     print("p final   [MPa]:", out["p"][-1]/1e6 if out["p"].size else np.nan)
+
+    plt.plot(mdots, time, color="r")
+    plt.title("Mass Flow vs Time")
+    plt.xlabel("Time [s]")
+    plt.ylabel("Mass Flow [kg/s]")
+    plt.show()
