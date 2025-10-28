@@ -139,79 +139,141 @@ class Injector:
     P2: float   # Pa
     N: int      # Number of Holes
 
-def run_blowdown(tank: Tank, inj: Injector, t_stop=30.0, dt=0.01, mode="isentropic"):
-    """
-    Integração de Euler das equações de massa e energia do tanque.
-    mode: "isentropic" ou "adiabatic" para o estado downstream no injetor.
-    """
-    Ac = inj.N* 0.25*pi*inj.D**2
 
-    # estado inicial coerente
-    M = float(tank.M0)
-    rho = M / float(tank.V)
-    # escolhe T inicial: usa T0 fornecida diretamente
+def _psat(T):
+    T = _clip_T(T)
+    return float(PropsSI("P","T",T,"Q",0,FLUID))
+
+def _rhoL_sat(T):
+    T = _clip_T(T)
+    return float(PropsSI("D","T",T,"Q",0,FLUID))
+
+def _betaT_liq(T):
+    # compressibilidade isotérmica β_T [1/Pa] do líquido saturado
+    T = _clip_T(T)
+    return float(PropsSI("isothermal_compressibility","T",T,"Q",0,FLUID))
+
+def rho_liq_PT(T, P):
+    T = _clip_T(T)
+    return float(PropsSI("D","T",T,"P",P,FLUID))  # densidade do líquido comprimido
+
+def M0_from_fill(V_total, fL, T0, P0):
+    rhoL = rho_liq_PT(T0, P0)
+    Vl0  = fL*V_total
+    return rhoL*Vl0  # massa inicial de N2O líquido
+
+
+def run_blowdown(tank, inj, t_stop=30.0, dt=0.01, mode="isentropic",
+                 fL=0.90, pressurante_constante=True, P_const=5.0e6):
+    Ac = inj.N*0.25*pi*inj.D**2
+
+    # estado inicial
+    M = float(tank.M0)           # massa de N2O líquido
     T = _clip_T(float(tank.T0))
-    p, h, s = state_DT(T, rho)
-    H = M * h
+    V = float(tank.V)
 
+    # pressão no tanque
+    P = P_const if pressurante_constante else None
+
+    # histórico
     t = 0.0
-    hist = {k: [] for k in ["t","M","T","rho","p","mdot"]}
+    hist = {k: [] for k in ["t","M","T","p","mdot"]}
 
     while t <= t_stop and M > 1e-8:
-        # upstream
-        p1, h1, s1 = state_DT(T, rho)
-        rho1 = rho
+        # volume de líquido e gás
+        if pressurante_constante:
+            P1 = P_const
+        else:
+            P1 = P  # se implementares o modelo do N2, atualizarás isto em baixo
 
-        # downstream no injetor
+        rhoL = rho_liq_PT(T, P1)    # densidade do N2O líquido no estado real do tanque
+        Vl   = M / rhoL
+        Vg   = max(V - Vl, 1e-8)
+
+        # propriedades do N2O líquido (usa rhoL, NÃO M/V)
+        p1, h1, s1 = state_DT(T, rhoL)  # atenção: 'p1' aqui é o calculado termodinâmico; usa P1 para hidráulica
+        # para hidráulica, a pressão montante correta é P1 (do pressurizante)
+        P_up = P1
+
+        # estado jusante no injetor
         if mode == "isentropic":
             T2, rho2, p2, h2, s2 = downstream_state(inj.P2, s1=s1)
         else:
             T2, rho2, p2, h2, s2 = downstream_state(inj.P2, h1=h1)
 
-        # Pvap para kappa
+        # Pvap para kappa (em T do tanque)
         Pv1 = _Pvap_from_T(T)
 
-        # NHNE
-        mdot = m_dot_NHNE(inj.Cd, Ac, p1, inj.P2, rho1, rho2, h1, h2, Pv1)
+        # caudal NHNE usa P_up como pressão montante
+        mdot = m_dot_NHNE(inj.Cd, Ac, P_up, inj.P2, rhoL, rho2, h1, h2, Pv1)
 
-        # integração de Euler
+        # integração de Euler sobre a massa e energia do LÍQUIDO
         M_new = max(M - mdot*dt, 1e-9)
-        H_new = H - h1*mdot*dt
-        rho_new = M_new / tank.V
+        H_old = M * h1
+        H_new = H_old - h1*mdot*dt   # entalpia que sai é ~ h1 (saída extraída do tanque)
+
         h_new = H_new / M_new
-        T_new = solve_T_from_h_rho(h_new, rho_new)
+        # resolve T novo a partir de h_new e rho_liq(T,P_up) ≈ dependente de T
+        # aproxima: itera T mantendo P_up
+        def fT(Tguess):
+            rho_guess = rho_liq_PT(Tguess, P_up)
+            return PropsSI("H","D",rho_guess,"T",_clip_T(Tguess),FLUID) - h_new
+        # bissecção simples
+        T_lo, T_hi = _T_bounds()
+        a,b = T_lo,T_hi
+        for _ in range(60):
+            m = 0.5*(a+b)
+            fm = fT(m)
+            fa = fT(a)
+            if fm==0 or abs(b-a)<1e-6: T_new=m; break
+            if fa*fm<0: b=m
+            else: a=m
+        else:
+            T_new = 0.5*(a+b)
 
         # registo
         hist["t"].append(t)
         hist["M"].append(M)
         hist["T"].append(T)
-        hist["rho"].append(rho)
-        hist["p"].append(p1)
+        hist["p"].append(P_up)
         hist["mdot"].append(mdot)
 
         # avanço
-        M, H, rho, T = M_new, H_new, rho_new, T_new
+        M, T = M_new, T_new
         t += dt
 
-        # paragem por pressão menor que downstream
-        if p1 <= inj.P2:
-            break
+        # critério de paragem hidráulico
+        if P_up <= inj.P2: break
 
-    for k in hist:
-        hist[k] = np.array(hist[k], dtype=float)
+        # se quiseres modelo de N2 selado (pressão variável), aqui atualizas P via gás ideal:
+        # n_N2 constante, P = n_N2*R*N2 * T / Vg
+        if not pressurante_constante:
+            P = max(1e5, P)  # placeholder: implementar n_N2 e atualizar P
+    for k in hist: hist[k]=np.array(hist[k],dtype=float)
     return hist
+
 
 # --------------------- exemplo ---------------------
 
 if __name__ == "__main__":
-    # define o teu caso aqui
-    tank = Tank(V=0.009, M0=9, T0=274.25)           # m^3, kg, K
-    inj  = Injector(Cd=0.80, D=0.0015, P2=3e6, N=12)  # Cd, diâmetro [m], pressão jusante [Pa]
+    V   = 0.009
+    fL  = 0.90
+    T0  = 274.25
+    P0  = 4.4e6  # 50 bar
 
-    out = run_blowdown(tank, inj, t_stop=30.0, dt=0.05, mode="isentropic")
+    M0  = M0_from_fill(V, fL, T0, P0)
+
+    tank = Tank(V=V, M0=M0, T0=T0)
+    inj  = Injector(Cd=0.80, D=0.0015, P2=1e5, N=12)
+
+    out = run_blowdown(tank, inj, t_stop=30.0, dt=0.05,
+                       mode="isentropic", fL=fL,
+                       pressurante_constante=True, P_const=P0)
+
 
     print(f"N={inj.N} furos, D={inj.D*1000} mm")
     print("Amostras:", out["t"].size)
-    print("mdot médio 5 s [kg/s]:", out["mdot"][out["t"] <= 5.0].mean() if out["t"].size else 0.0)
+    print("mdot médio 15 s [kg/s]:", out["mdot"][out["t"] <= 15.0].mean() if out["t"].size else 0.0)
+
     print("p inicial [MPa]:", out["p"][0]/1e6 if out["p"].size else np.nan)
     print("p final   [MPa]:", out["p"][-1]/1e6 if out["p"].size else np.nan)
