@@ -163,6 +163,13 @@ def M0_from_fill(V_total, fL, T0, P0):
     Vl0  = fL*V_total
     return rhoL*Vl0  # massa inicial de N2O líquido
 
+def Cd_time(Cd_nom, t, t_open=0.15):
+    if t <= 0.0: return 0.0
+    if t >= t_open: return Cd_nom
+    # rampa suave (cosine)
+    x = t / t_open
+    return Cd_nom * 0.5 * (1 - np.cos(np.pi * x))
+
 
 def run_blowdown(tank, inj, dt=0.01, mode="isentropic",
                  fL=0.90, pressurante_constante=True, P_const=5.0e6,
@@ -191,7 +198,9 @@ def run_blowdown(tank, inj, dt=0.01, mode="isentropic",
             T2, rho2, _, h2, _ = downstream_state(inj.P2, h1=h1)
 
         Pv1  = _Pvap_from_T(T)
-        mdot = m_dot_NHNE(inj.Cd, Ac, P_up, inj.P2, rhoL, rho2, h1, h2, Pv1)
+        Cd_eff = Cd_time(inj.Cd, t, t_open=0.15)   # 150 ms para abrir
+        mdot = m_dot_NHNE(Cd_eff, Ac, P_up, inj.P2, rhoL, rho2, h1, h2, Pv1)
+
 
         # Euler
         M_new = max(M - mdot*dt, 0.0)
@@ -258,7 +267,8 @@ def run_blowdown_autopressurizado(tank, inj, t_stop=30.0, dt=0.01, mode="isentro
         # caudal de saída (líquido, mas ajustado pelo NHNE)
         Pv1 = Ps
         T2, rho2, p2, h2, s2 = downstream_state(inj.P2, s1=sL)
-        mdot = m_dot_NHNE(inj.Cd, Ac, Ps, inj.P2, rhoL, rho2, hL, h2, Pv1)
+        Cd_eff = Cd_time(inj.Cd, t, t_open=0.15)   # 150 ms para abrir
+        mdot = m_dot_NHNE(Cd_eff, Ac, Ps, inj.P2, rhoL, rho2, h1, h2, Pv1)
 
         # balanço de energia com evaporação instantânea
         M_new = max(M - mdot*dt, 1e-9)
@@ -272,7 +282,8 @@ def run_blowdown_autopressurizado(tank, inj, t_stop=30.0, dt=0.01, mode="isentro
         hist["T"].append(T)
         hist["p"].append(Ps)
         hist["mdot"].append(mdot)
-
+        time.append(t)
+        mdots.append(mdot)
         M, T = M_new, T_new
         t += dt
 
@@ -297,7 +308,7 @@ if __name__ == "__main__":
     inj  = Injector(Cd=0.67, D=0.0015, P2=1e5, N=12)
 
     
-    out, t_empty = run_blowdown_autopressurizado(tank, inj, t_stop=30.0, dt=0.05)
+    out, t_empty = run_blowdown(tank, inj, dt=0.05)
 
     print(f"P0={P0} | T0={T0} | V={V} | fl={fL}")
     print(f"N={inj.N} furos, D={inj.D*1000} mm")
@@ -308,7 +319,7 @@ if __name__ == "__main__":
     print("p inicial [MPa]:", out["p"][0]/1e6 if out["p"].size else np.nan)
     print("p final   [MPa]:", out["p"][-1]/1e6 if out["p"].size else np.nan)
 
-    plt.plot(mdots, time, color="r")
+    plt.plot(time, mdots, color="r")
     plt.title("Mass Flow vs Time")
     plt.xlabel("Time [s]")
     plt.ylabel("Mass Flow [kg/s]")

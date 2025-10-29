@@ -6,9 +6,9 @@ from math import pi, ceil
 FLUID = "NitrousOxide"  # CoolProp name
 
 # ===== Inputs (SI) =====
-m_dot_total = 1.5          # kg/s  (caudal desejado)
+m_dot_total = 1.2          # kg/s  (caudal desejado)
 P_tank_bar  = 40.0         # bar   (pressão do tanque)
-T_tank_K    = 288.15       # K     (~10 °C)
+T_tank_K    = 283.15       # K     (~10 °C)
 P_cham_bar  = 30.0         # bar   (alvo de câmara para sizing inicial)
 Cd          = 0.67         # coef. descarga
 D_hole      = 1.5e-3       # m     (diâmetro escolhido para varrer N)
@@ -154,7 +154,7 @@ def size_for_given_D(D):
     }
 
 # ===== Exemplos de uso =====
-outA = size_for_given_N(N=6)         # escolhe N e obtém D
+outA = size_for_given_N(N=12)         # escolhe N e obtém D
 outB = size_for_given_D(D=D_hole)    # escolhe D e obtém N mínimo
 
 print("=== VIA A: dar N, obter D ===")
