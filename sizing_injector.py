@@ -68,32 +68,65 @@ def mdot_incompressible_per_hole(A):
     """Orifício líquido incompressível (limite superior)."""
     return Cd * A * np.sqrt(2.0 * rho_l * dP)
 
-def mdot_HEM_like_per_hole(A):
-    """
-    Aproximação HEM-like simples para flashing:
-    Usa densidade efetiva e head de pressão. Conservador vs NHNE.
-    """
-    # Qualidade isentálpica na saída (clipped 0..1)
-    x = (h_in - h_f_P2) / max(h_fg_P2, 1e-6)
-    x = float(np.clip(x, 0.0, 1.0))
-    # Densidades saturadas na saída
-    rho_l2 = PropsSI("D","P",P2,"Q",0,FLUID)
-    rho_g2 = PropsSI("D","P",P2,"Q",1,FLUID)
-    # Densidade de mistura HEM
-    rho_mix = 1.0 / (x / rho_g2 + (1.0 - x) / rho_l2)
-    # Fluxo "tipo HEM": substitui rho_l por rho_mix no orifício
-    return Cd * A * np.sqrt(2.0 * rho_mix * dP)
+EPS_REL = 1e-6
+
+def is_near_saturation(P, T, fluid):
+    Psat = PropsSI("P","T",T,"Q",0,fluid)
+    return abs(P - Psat) <= max(1.0, EPS_REL*P)
+
+def rho_sat_mixture_from_h(P, T, h, fluid):
+    # densidades saturadas
+    rhoL = PropsSI("D","T",T,"Q",0,fluid)
+    rhoV = PropsSI("D","T",T,"Q",1,fluid)
+    hL   = PropsSI("H","T",T,"Q",0,fluid)
+    hV   = PropsSI("H","T",T,"Q",1,fluid)
+    x = 0.0 if hV==hL else np.clip((h - hL)/max(hV - hL, 1e-12), 0.0, 1.0)
+    # regra da alavanca
+    return 1.0 / (x/rhoV + (1.0 - x)/rhoL), x
+
+def rho_from_PT_safe(P, T, fluid, h_hint=None):
+    """Tenta D(P,T); se estiver na saturação, usa mistura saturada com pista de h."""
+    try:
+        return PropsSI("D","P",P,"T",T,fluid), None
+    except Exception:
+        pass
+    if is_near_saturation(P, T, fluid):
+        if h_hint is None:
+            h_hint = PropsSI("H","P",P,"T",T,fluid)
+        rho_mix, x = rho_sat_mixture_from_h(P, T, h_hint, fluid)
+        return rho_mix, x
+    # último recurso: pequeno nudge
+    return PropsSI("D","P",P*(1.0 - EPS_REL),"T",T*(1.0 - EPS_REL),fluid), None
+
+def mdot_HEM_true_per_hole(A):
+    h1 = PropsSI("H","T",T_tank_K,"P",max(P1,P_sat*1.01),FLUID)
+    s1 = PropsSI("S","T",T_tank_K,"P",max(P1,P_sat*1.01),FLUID)
+
+    # ---- Jusante isentrópico (ou adiabático se trocares para ("P",P2,"H",h1))
+    T2  = PropsSI("T","P",P2,"S",s1,FLUID)
+
+    # Evita crash se P2 ≈ Psat(T2)
+    try:
+        h2 = PropsSI("H","P",P2,"T",T2,FLUID)
+    except ValueError:
+        # calcular via mistura saturada
+        hL = PropsSI("H","T",T2,"Q",0,FLUID)
+        hV = PropsSI("H","T",T2,"Q",1,FLUID)
+        h2 = 0.5*(hL + hV)  # média simples, saída bifásica
+
+    # densidade a jusante (robusta na saturação)
+    rho2, _ = rho_from_PT_safe(P2, T2, FLUID, h_hint=h2)
+
+    dh = max(h1 - h2, 0.0)
+    return Cd * A * rho2 * np.sqrt(2.0 * dh)
+
+
 
 def mdot_NHNE_per_hole(A):
-    """
-    Mistura NHNE de Solomon: combina inc e HEM por kappa.
-    Forma convexa: fração HEM aumenta com superheat.
-    """
-    m_inc = mdot_incompressible_per_hole(A)
-    m_hem = mdot_HEM_like_per_hole(A)
-    w_hem = 1.0/(1.0 + kappa)          # peso HEM
-    w_inc = 1.0 - w_hem                # peso incompressível
-    return w_inc * m_inc + w_hem * m_hem
+    m_inc = Cd * A * np.sqrt(2.0 * rho_l * dP)
+    m_hem = mdot_HEM_true_per_hole(A)
+    w_hem = 1.0/(1.0 + kappa)     # Solomon: W pesa o HEM
+    return (1.0 - w_hem)*m_inc + w_hem*m_hem
 
 # ===== Solver simples para A dado m_dot por furo =====
 def area_for_target_mdot_per_hole(mdot_h, model="NHNE"):
@@ -102,7 +135,7 @@ def area_for_target_mdot_per_hole(mdot_h, model="NHNE"):
     model in {"INC","HEM","NHNE"}.
     """
     f = {"INC": mdot_incompressible_per_hole,
-         "HEM": mdot_HEM_like_per_hole,
+         "HEM": mdot_HEM_true_per_hole,
          "NHNE": mdot_NHNE_per_hole}[model]
     # limites de busca para A
     A_lo, A_hi = 1e-10, 1e-4  # 0.0001 m2 = D≈11.3 mm
