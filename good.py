@@ -219,10 +219,10 @@ if __name__ == "__main__":
     M0 = M0_from_fill(Vtank, fL, T0, Ppress)  # ou introduz manualmente
 
     tank = Tank(V=Vtank, M0=M0, T0=T0)
-    inj  = Injector(Cd=0.67, D=1.5e-3, N=40)
+    inj  = Injector(Cd=0.67, D=1.5e-3, N=12)
 
     # escolhe o modo
-    mode_tank = "pressurized"   # ou "pressurized"
+    mode_tank = "autopressurized"   # ou "pressurized"
     hist, t_end = run_blowdown(tank, inj, mode_tank=mode_tank,
                                P_const=Ppress, P2=P2,
                                dt=0.1, t_stop=30.0,

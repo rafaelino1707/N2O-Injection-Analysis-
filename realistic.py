@@ -18,11 +18,11 @@ V_tank   = 0.009   # m^3
 fill_vol_frac = 0.90  # 90% volume of liquid N2O/CO2
 P0_tot  = 40.0e5     # Pa (tank pressurized to 50 bar by N2; use as initial total pressure)
 # Injector
-d_inj = 0.0015 # m
+d_inj = 0.003 # m
 N = 12
 A_c      = N*math.pi/4.0 * d_inj**2  # m^2
 Cd       = 0.67              # discharge coefficient
-P_amb    = 1e5            # Pa (ambient)
+P_amb    = 3e6            # Pa (ambient)
 inj_mode = 1                 # 1=isentrope (s2=s1), 2=adiabatic (h2=h1)
 
 # ---------------------------- NHNE options ---------------------------- #

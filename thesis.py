@@ -100,8 +100,10 @@ T_crit= PropsSI("Tcrit", FLUID) - 1e-3
 P_trip= PropsSI("ptriple", FLUID)
 
 # ---------------------------- Initialize state from M0, T0 ---------------------------- #
-rho = M0 / V_tank
-P, x, h, s = f_T_rho(T0, rho)
+#rho = M0 / V_tank
+rho_initial = PropsSI("D", "P", SatProps.P, "T", T0)
+M0 = V_tank * rho_initial
+P, x, h, s = f_T_rho(T0, rho_initial)
 H_total = M0 * h
 M = M0
 T = T0
