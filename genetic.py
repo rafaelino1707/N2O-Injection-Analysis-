@@ -1,4 +1,5 @@
 import numpy as np
+import math
 
 # ----------------- Modelo ideal do nozzle ----------------- #
 def area_mach(M, gamma):
@@ -118,6 +119,7 @@ def ga_nozzle(
     return {
         "epsilon": eps,
         "At [m^2]": At,
+        "rt [m]": np.sqrt(At/math.pi),
         "Cf": Cf,
         "F [N]": F,
         "pe [Pa]": pe,
