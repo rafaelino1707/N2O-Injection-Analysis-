@@ -254,7 +254,7 @@ def main():
     plt.show()
 
     # CSV + NPZ
-    header = "t [s],P [Pa],T [K],M [kg],x [-],mdot [kg/s]"
+    header = "t [s],P [Pa],T [K],M [kg],x [-],w[-], mdot [kg/s]"
     data = np.column_stack([t, P, T, M, x, mdot])
     np.savetxt("solomon_blowdown_results.csv", data, delimiter=",", fmt="%.6e", header=header, comments="")
     np.savez("solomon_blowdown_results.npz", t=t, P=P, T=T, M=M, x=x, mdot=mdot)
