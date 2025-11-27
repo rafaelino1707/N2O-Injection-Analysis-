@@ -9,7 +9,7 @@ from math import pi
 FLUID = "NitrousOxide"
 
 # --- Geometria da placa ---
-N_holes = 12
+N_holes = 64
 D_hole  = 1.5e-3
 Cd      = 0.67
 A_hole  = 0.25*pi*D_hole**2
@@ -20,7 +20,9 @@ Pa_per_bar = 1e5
 P2 = P_cham_bar * Pa_per_bar
 
 # --- Varredura de pressão do tanque ---
-P_range_bar = np.linspace(5.0, 50.0, 200)
+# --- Varredura de pressão do tanque (50 → 30 bar) ---
+P_range_bar = np.linspace(50.0, 30.0, 200)
+
 
 # --- Utilidades robustas na saturação ---
 EPS_REL = 1e-6
@@ -72,7 +74,7 @@ def mdot_NHNE_total(P1, T1):
     return N_holes * m_hole
 
 # ========== PLOTS ==========
-mode = "fixed_T"   # "self_pressurized" ou "fixed_T"
+mode = "self_pressurized"   # "self_pressurized" ou "fixed_T"
 
 if mode == "self_pressurized":
     # Tanque auto-pressurizado: T1 = Tsat(P1)
@@ -95,7 +97,7 @@ if mode == "self_pressurized":
     axs[0].set_xlabel("Tank Pressure [bar] (on saturation)")
     axs[0].set_ylabel(r"Total $\dot m_{\mathrm{NHNE}}$ [kg/s]")
     axs[0].set_title(
-        f"Self-pressurized blowdown: T1 = Tsat(P1)\n"
+        f"Self-pressurized blowdown: T1 = Tsat(P1) & Pout=1 bar\n"
         f"N={N_holes} | D={D_hole*1e3:.1f} mm | Cd={Cd}"
     )
     axs[0].grid(True, ls=":")
@@ -106,6 +108,9 @@ if mode == "self_pressurized":
     axs[1].set_ylabel(r"Total $\dot m_{\mathrm{NHNE}}$ [kg/s]")
     axs[1].set_title("Same case, reparametrized as $\dot m$ vs $T_{sat}(P)$")
     axs[1].grid(True, ls=":")
+    
+    axs[0].invert_xaxis()
+    axs[1].invert_xaxis()
 
     plt.tight_layout()
     plt.show()
