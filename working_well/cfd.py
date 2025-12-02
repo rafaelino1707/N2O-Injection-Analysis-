@@ -322,7 +322,7 @@ if __name__ == "__main__":
 
     plt.show()
 
-T = -20 + 273.15   # converter 4 ºC para Kelvin
+T = -0 + 273.15   # converter 4 ºC para Kelvin
 Psat = PropsSI("P","T",T,"Q",0, "NitrousOxide")   # Q=0 → líquido saturado
 
 print("Psat =", Psat, "Pa")

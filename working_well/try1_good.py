@@ -16,13 +16,13 @@ FLUID   = "NitrousOxide"
 EPS_REL = 1e-4
 
 # Geometria da placa (exemplo)
-N_holes = 64
+N_holes = 65
 D_hole  = 1.5e-3  # m
 Cd      = 0.67
 A_hole  = 0.25*np.pi*D_hole**2
 
 # Pressão a jusante (cold-flow, 1 bar abs)
-P2 = 1.0e5  # Pa
+P2 = 30.0e5  # Pa
 
 
 # -------------------------
@@ -304,8 +304,8 @@ if __name__ == "__main__":
     #  - Volume 10 L
     #  - T0 = 293 K
     #  - 70% volume líquido
-    V_tank = 10e-3   # m^3
-    T0 = 263.0       # K
+    V_tank = 9e-3   # m^3
+    T0 = 7 + 273.15       # K
     fill_l_vol = 0.9
 
     # Estado inicial a partir de volume e fração de enchimento
@@ -329,7 +329,7 @@ if __name__ == "__main__":
 
     # Simulação até 5 s ou até massa <= m_min
     t_final = 5.0
-    dt = 0.01
+    dt = 0.001
     m_min = 1e-4  # kg
 
     t_hist, P_hist, T_hist, mdot_hist, m_hist = simulate_coldflow(
