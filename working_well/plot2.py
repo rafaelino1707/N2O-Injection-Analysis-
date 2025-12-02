@@ -21,7 +21,7 @@ P2 = P_cham_bar * Pa_per_bar
 
 # --- Varredura de pressão do tanque ---
 # --- Varredura de pressão do tanque (50 → 30 bar) ---
-P_range_bar = np.linspace(50.0, 30.0, 200)
+P_range_bar = np.linspace(50.0, 10.0, 200)
 
 
 # --- Utilidades robustas na saturação ---
@@ -74,7 +74,7 @@ def mdot_NHNE_total(P1, T1):
     return N_holes * m_hole
 
 # ========== PLOTS ==========
-mode = "self_pressurized"   # "self_pressurized" ou "fixed_T"
+mode = "fixed_T"   # "self_pressurized" ou "fixed_T"
 
 if mode == "self_pressurized":
     # Tanque auto-pressurizado: T1 = Tsat(P1)
